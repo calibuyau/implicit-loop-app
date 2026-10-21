@@ -21,7 +21,17 @@ export function unlockAudio() {
     if (!AC) return;
     attachAudio(new AC());
   }
-  if (ac.state === 'suspended') ac.resume?.();
+  if (ac.state !== 'running') ac.resume?.();   // 'suspended', or iOS 'interrupted' after a call or the lock screen
+}
+
+if (typeof window !== 'undefined') {
+  // iPhone: play even with the ring/silent switch on silent (iOS 16.4+; ignored elsewhere).
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+  // iOS only lets audio start on some gestures (a tap or a finger lifting, not a finger landing), so try
+  // on every kind anywhere in the app; the Start button's tap then unlocks sound before any game runs.
+  for (const t of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+    addEventListener(t, unlockAudio, { capture: true, passive: true });
+  }
 }
 
 const ready = () => ac && (ac.state === 'running' || (typeof OfflineAudioContext !== 'undefined' && ac instanceof OfflineAudioContext));
