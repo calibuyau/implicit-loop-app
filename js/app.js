@@ -46,13 +46,17 @@ function base64(text) {
   return btoa(s);
 }
 
+/// Testers' phones have no token: they send through this relay (relay/worker.js), which holds it.
+const RELAY_URL = 'https://implicit-loop-relay.calibuyau.workers.dev/session';
+
 /// The token has its own storage key, so "Export everything" never includes it.
 const Upload = {
   settings: { repo: '', token: '', ...Store.load(KEYS.upload, {}) },
   status: '',
   busy: false,
   save() { Store.save(KEYS.upload, this.settings); },
-  get ready() { return /^[\w.-]+\/[\w.-]+$/.test(this.settings.repo) && !!this.settings.token; },
+  get direct() { return /^[\w.-]+\/[\w.-]+$/.test(this.settings.repo) && !!this.settings.token; },
+  get ready() { return this.direct || !!RELAY_URL; },
   waiting: () => Store.load(KEYS.archive, []).filter(e => !e.uploaded && !e.demo && !e.surveyPending && e.share !== false),   // answers go in the same file; share false = participant said no
   api(path, init = {}) {
     return fetch(`https://api.github.com/repos/${this.settings.repo}${path}`, {
@@ -63,24 +67,29 @@ const Upload = {
   async put(e) {
     const file = JSONX.stringify({ schema: 1, app: 'web', participant: e.profileName, participantID: e.profileID, date: e.date,
       source: e.source ?? 'unknown', config: e.config, survey: e.survey ?? null, blocks: e.blocks, log: e.log ?? null });
+    if (!this.direct) {
+      const r = await fetch(RELAY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: file });
+      if (!r.ok) throw new Error(`the relay answered ${r.status}`);   // 200 when the file is already there
+      return;
+    }
     const r = await this.api(`/contents/${this.path(e)}`, {
       method: 'PUT', body: JSON.stringify({ message: `Session: ${e.profileName} ${e.date}`, content: base64(file) }),
     });
     if (!r.ok && r.status !== 422) throw new Error(`GitHub answered ${r.status}`);   // 422: the file is already there
   },
   async test() {
-    if (!this.ready) return this.note('Fill in the repo (owner/name) and the token first.');
+    if (!this.direct) return this.note('Fill in the repo (owner/name) and the token first.');
     this.note('Checking…');
     try {
       const r = await this.api('');
       this.note(r.ok ? 'Connected. The repo is reachable with this token.' : `GitHub answered ${r.status}: check the repo name and the token.`);
     } catch (err) { this.note(`No connection: ${err.message}`); }
   },
-  /// Uploads every finished session not uploaded yet, oldest first.
-  async pending() {
+  /// Uploads every finished session not uploaded yet, oldest first; `chosen`: only those the participant said to send.
+  async pending(chosen = false) {
     if (this.busy || !this.ready) return;
     this.busy = true;
-    const todo = this.waiting();
+    const todo = this.waiting().filter(e => !chosen || e.share === true);
     let done = 0;
     try {
       for (const e of todo) {
@@ -94,7 +103,7 @@ const Upload = {
       this.note(`Upload stopped after ${done} of ${todo.length} (${err.message}). The rest stay in this browser; retry from Researcher.`);
     } finally {
       this.busy = false;
-      if (model.ui.tab === 'researcher' && !model.session) render();
+      if (['researcher', 'history'].includes(model.ui.tab) && !model.session && !model.survey && !model.reveal) render();
     }
   },
   note(s) {
@@ -138,6 +147,9 @@ const model = {
   wakeLock: null,
   demo: !!demoGame,
 
+  /// ?tester: the tester interface (one name, random-goal sessions, own history). ?researcher switches back.
+  /// Remembered, so a home-screen bookmark keeps it.
+  get tester() { return this.ui.mode === 'tester' && !this.demo; },
   get profile() { return this.profiles.find(p => p.id === this.ui.profileID) ?? this.profiles[0]; },
   get actuator() { return this.session?.actuator ?? NEUTRAL_ACTUATOR; },
 
@@ -228,7 +240,7 @@ const model = {
     this.reveal = null;
     this.sentLast = send;
     render();
-    if (send) Upload.pending();
+    if (send) Upload.pending(this.tester);
   },
 
   /// Games call this for every reward opportunity (success / near miss / nothing).
@@ -239,7 +251,14 @@ const model = {
   luckyDraw() { return Math.random() < this.actuator.pSuccess; },
 };
 if (!model.profiles.length) model.profiles.push(new UserProfile('Participant 1'));
-model.polar.addEventListener('change', () => { if (!model.session && model.ui.tab === 'play') renderPolarStatus(); });
+if (params.has('tester') || params.has('researcher')) {
+  model.ui.mode = params.has('tester') ? 'tester' : 'researcher';
+  model.ui.tab = 'play';
+  model.persist();
+}
+if (model.tester) model.ui.source = 'polar';
+if (model.tester && !demoGame) setTimeout(() => Upload.pending(true), 0);   // retry sends that failed (e.g. no signal)
+model.polar.addEventListener('change', () => { if (!model.session && !model.survey && !model.reveal && model.ui.tab === 'play') renderPolarStatus(); });
 
 // MARK: views
 
@@ -249,6 +268,7 @@ function render() {
   if (model.session) { renderSession(); return; }
   if (model.survey) { renderSurvey(); return; }
   if (model.reveal) { renderReveal(); return; }
+  if (model.tester) { renderTester(); return; }
   const tabs = [['play', 'Play'], ['results', 'Results'], ['researcher', 'Researcher']];
   app.innerHTML = `
     <header class="appbar">
@@ -318,9 +338,8 @@ function renderPolarStatus() {
       ? '<button id="polarOff">Disconnect</button>' : '<button id="polarOn">Connect</button>'}</div>`;
   el.querySelector('#polarOn')?.addEventListener('click', () => model.polar.connect());
   el.querySelector('#polarOff')?.addEventListener('click', () => model.polar.disconnect());
-  const start = document.getElementById('start');
-  if (start) {
-    const needStrap = model.ui.source === 'polar' && !model.polar.connected;
+  const needStrap = model.ui.source === 'polar' && !model.polar.connected;
+  for (const start of document.querySelectorAll('#start, #startRandom')) {
     start.disabled = !model.config.games.length || needStrap;
     start.title = needStrap ? 'Connect the strap first' : '';
   }
@@ -410,6 +429,87 @@ function renderReveal() {
   document.getElementById('shareNo').onclick = () => model.shareSession(false);
 }
 
+// Tester interface: name once, strap, random-goal start; and the tester's own past sessions.
+
+function renderTester() {
+  const tabs = [['play', 'Play'], ['history', 'My sessions']];
+  if (!tabs.some(([k]) => k === model.ui.tab)) model.ui.tab = 'play';
+  app.innerHTML = `
+    <header class="appbar">
+      <h1>Implicit Loop</h1>
+      <nav>${tabs.map(([k, l]) => `<button data-tab="${k}" class="${model.ui.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
+    </header>
+    <main class="page tester">${model.ui.tab === 'history' ? testerHistoryView() : testerPlayView()}</main>`;
+  app.querySelector('nav').onclick = e => {
+    const t = e.target.dataset.tab;
+    if (t) { model.ui.tab = t; model.persist(); render(); }
+  };
+  if (model.ui.tab === 'play') bindTesterPlay();
+  app.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {
+    Store.updateEntry(b.dataset.send, { share: true });
+    render();
+    Upload.pending(true);
+  });
+}
+
+function testerPlayView() {
+  const p = model.profile, named = !!model.ui.testerNamed;
+  return `
+    <section class="group"><h2>You</h2>
+      ${named && !model.renaming
+        ? `<div class="row status"><span>Playing as <b>${esc(p.name)}</b></span><button id="rename">Change</button></div>`
+        : `<form id="name" class="row"><input id="nameIn" placeholder="Your name or tester code" value="${named ? esc(p.name) : ''}" autocomplete="off" maxlength="40" required><button>Save</button></form>
+           <p class="foot">Use the same name every time, so your sessions are kept together.</p>`}
+    </section>
+    <section class="group"><h2>Heart strap</h2>
+      <div id="polar"></div>
+      <p class="foot">Put on the Polar H10 (wet the strap's sensors) before connecting.</p>
+    </section>
+    <section class="group">
+      <button id="startRandom" class="primary" ${named ? '' : 'disabled'}>▶ Start session</button>
+      <p class="foot">About ${Math.round(sessionTotalS(model.config) / 60)} minutes. Sit comfortably and play as you normally would. At the end there are three quick questions.</p>
+      ${model.justSaved && model.sentLast ? `<p class="foot upload-status">${esc(Upload.status)}</p>` : ''}
+    </section>`;
+}
+
+function bindTesterPlay() {
+  const form = document.getElementById('name');
+  if (form) form.onsubmit = e => {
+    e.preventDefault();
+    const name = document.getElementById('nameIn').value.trim();
+    if (!name) return;
+    model.profile.name = name;
+    model.ui.testerNamed = true;
+    model.renaming = false;
+    model.persist();
+    render();
+  };
+  const rn = document.getElementById('rename');
+  if (rn) rn.onclick = () => { model.renaming = true; render(); };
+  const go = document.getElementById('startRandom');
+  go.onclick = () => model.start({ randomGoal: true });
+  renderPolarStatus();
+  if (!model.ui.testerNamed) go.disabled = true;
+}
+
+function testerHistoryView() {
+  const mine = Store.load(KEYS.archive, []).filter(e => e.profileID === model.profile.id && !e.demo).reverse();
+  if (!mine.length) return '<section class="group"><p class="muted">No sessions yet. Your sessions appear here after you finish one.</p></section>';
+  const guessed = mine.filter(e => ['increase', 'decrease'].includes(e.survey?.guess) && !e.survey?.skipped);
+  const right = guessed.filter(e => e.survey.guess === e.config.goal).length;
+  const row = e => {
+    const up = e.config.goal === 'increase', g = e.survey?.skipped || e.survey?.missed ? null : e.survey?.guess;
+    const guess = !g ? '–' : g === 'unsure' ? "couldn't tell" : g === e.config.goal ? '✓ right' : '✗ wrong';
+    const sent = e.uploaded ? 'sent' : e.share === false ? 'not sent' : e.share ? 'waiting' : `<button data-send="${e.id}">Send</button>`;
+    return `<tr><td>${new Date(e.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}<br><small class="muted">${new Date(e.date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</small></td>
+      <td class="${up ? 'up' : 'down'}">${up ? '▲ Increase' : '▼ Decrease'}</td><td>${guess}</td><td class="muted">${sent}</td></tr>`;
+  };
+  return `<section class="group"><h2>${mine.length} session${mine.length === 1 ? '' : 's'}</h2>
+      ${guessed.length ? `<p class="q">You guessed the direction right in ${right} of ${guessed.length} session${guessed.length === 1 ? '' : 's'} where you picked one.</p>` : ''}
+      <table class="history"><tr><th>When</th><th>Goal</th><th>Your guess</th><th></th></tr>${mine.map(row).join('')}</table>
+    </section>`;
+}
+
 // Session
 
 let mounted = null;   // { kind, game }
@@ -430,9 +530,11 @@ function renderSession() {
   // Long-press (or double-click) the progress bar to show/hide the researcher overlay.
   const bar = document.getElementById('progress');
   let pressTimer = 0;
-  bar.onpointerdown = () => { pressTimer = setTimeout(toggleOverlay, 600); };
-  bar.onpointerup = bar.onpointerleave = () => clearTimeout(pressTimer);
-  bar.ondblclick = toggleOverlay;
+  if (!model.tester) {
+    bar.onpointerdown = () => { pressTimer = setTimeout(toggleOverlay, 600); };
+    bar.onpointerup = bar.onpointerleave = () => clearTimeout(pressTimer);
+    bar.ondblclick = toggleOverlay;
+  }
   mounted = null;
   updateSession();
 }
@@ -629,7 +731,7 @@ function researcherView() {
       <label class="field"><span>Access token</span><input id="upToken" type="password" placeholder="github_pat_…" value="${esc(Upload.settings.token)}" autocomplete="off"></label>
       <div class="row"><button id="upTest">Test connection</button><button id="upNow" ${Upload.waiting().length ? '' : 'disabled'}>Upload ${Upload.waiting().length} waiting</button></div>
       <p class="foot upload-status">${esc(Upload.status)}</p>
-      <p class="foot">After each session the participant chooses whether to send it. Each sent session goes to <code>sessions/&lt;participant&gt;/</code> in the repo as one JSON file, and the repo's analysis runs on it. The token stays in this browser and is never exported. Use a fine-grained token that can only write this one repo, and coded participant names.</p>
+      <p class="foot">After each session the participant chooses whether to send it. Without a token here, sessions go through the relay${RELAY_URL ? '' : ' (not set up yet)'}, as on testers' phones (tester link: this address with <code>?tester</code>). Each sent session goes to <code>sessions/&lt;participant&gt;/</code> in the repo as one JSON file, and the repo's analysis runs on it. The token stays in this browser and is never exported. Use a fine-grained token that can only write this one repo, and coded participant names.</p>
     </section>
     <section class="group">
       <div class="row"><button id="resetTuner" class="danger">Reset tuner for ${esc(model.profile.name)}</button></div>

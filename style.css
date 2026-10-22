@@ -198,3 +198,11 @@ details.tuner summary { cursor: pointer; font-family: ui-monospace, Menlo, monos
 .reveal button { width: 100%; margin-top: 8px; }
 button.link { border: 0; background: none; color: var(--muted); text-decoration: underline; padding: 4px; }
 #startRandom { width: 100%; margin-top: 8px; padding: 12px; font-weight: 600; font-size: 1.05rem; }
+
+/* Tester interface */
+.tester .status b { font-weight: 600; }
+table.history { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+table.history th { text-align: left; font-weight: 500; color: var(--muted); font-size: 0.78rem; padding: 0 6px 6px 0; }
+table.history td { padding: 8px 6px 8px 0; border-top: 1px solid var(--line); vertical-align: top; }
+table.history .up { color: var(--c1); }
+table.history .down { color: var(--danger); }
