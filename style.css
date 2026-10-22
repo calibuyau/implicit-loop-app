@@ -180,3 +180,21 @@ details.tuner summary { cursor: pointer; font-family: ui-monospace, Menlo, monos
 .wide-table .founds { display: grid; }
 /* A phone on its side: let the Solitaire table use the whole width. */
 @media (orientation: landscape) and (pointer: coarse) { #app:has(.solitaire) { max-width: none; } }
+
+/* End-of-session questions */
+.survey h1 { font-size: 1.3rem; margin: 18px 0 4px; }
+.survey .q { margin: 0 0 12px; font-size: 1.05rem; line-height: 1.35; }
+.survey .seg button { padding: 12px 4px; font-size: 1.05rem; }
+.survey .seg.choice button { font-size: 0.95rem; }
+.survey .ends { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
+.survey .ends span:nth-child(2):not(:last-child) { text-align: center; }
+.survey .ends span:last-child { text-align: right; }
+.survey #surveyDone { width: 100%; margin-top: 6px; }
+.center { text-align: center; }
+.reveal .goal-label { margin: 4px 0 0; color: var(--muted); }
+.reveal .goal { font-size: 1.8rem; font-weight: 700; margin: 6px 0; }
+.reveal .goal.up { color: var(--c1); }
+.reveal .goal.down { color: var(--danger); }
+.reveal button { width: 100%; margin-top: 8px; }
+button.link { border: 0; background: none; color: var(--muted); text-decoration: underline; padding: 4px; }
+#startRandom { width: 100%; margin-top: 8px; padding: 12px; font-weight: 600; font-size: 1.05rem; }

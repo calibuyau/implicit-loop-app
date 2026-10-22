@@ -29,11 +29,12 @@ const Store = {
       all[i].log = null;
     }
   },
-  markUploaded(id) {
+  updateEntry(id, fields) {
     const all = Store.load(KEYS.archive, []);
-    for (const e of all) if (e.id === id) e.uploaded = true;
+    for (const e of all) if (e.id === id) Object.assign(e, fields);
     Store.save(KEYS.archive, all);
   },
+  markUploaded(id) { Store.updateEntry(id, { uploaded: true }); },
 };
 
 // MARK: upload (each finished session → one JSON file in a private GitHub repo)
@@ -47,12 +48,12 @@ function base64(text) {
 
 /// The token has its own storage key, so "Export everything" never includes it.
 const Upload = {
-  settings: { repo: '', token: '', auto: false, ...Store.load(KEYS.upload, {}) },
+  settings: { repo: '', token: '', ...Store.load(KEYS.upload, {}) },
   status: '',
   busy: false,
   save() { Store.save(KEYS.upload, this.settings); },
   get ready() { return /^[\w.-]+\/[\w.-]+$/.test(this.settings.repo) && !!this.settings.token; },
-  waiting: () => Store.load(KEYS.archive, []).filter(e => !e.uploaded && !e.demo),
+  waiting: () => Store.load(KEYS.archive, []).filter(e => !e.uploaded && !e.demo && !e.surveyPending && e.share !== false),   // answers go in the same file; share false = participant said no
   api(path, init = {}) {
     return fetch(`https://api.github.com/repos/${this.settings.repo}${path}`, {
       ...init, headers: { Authorization: `Bearer ${this.settings.token}`, Accept: 'application/vnd.github+json' },
@@ -61,7 +62,7 @@ const Upload = {
   path: e => `sessions/${e.profileName.replace(/\W+/g, '_')}/${stamp(e.date)}_${e.source ?? 'unknown'}.json`,
   async put(e) {
     const file = JSONX.stringify({ schema: 1, app: 'web', participant: e.profileName, participantID: e.profileID, date: e.date,
-      source: e.source ?? 'unknown', config: e.config, blocks: e.blocks, log: e.log ?? null });
+      source: e.source ?? 'unknown', config: e.config, survey: e.survey ?? null, blocks: e.blocks, log: e.log ?? null });
     const r = await this.api(`/contents/${this.path(e)}`, {
       method: 'PUT', body: JSON.stringify({ message: `Session: ${e.profileName} ${e.date}`, content: base64(file) }),
     });
@@ -152,11 +153,16 @@ const model = {
     this.persist();
   },
 
-  start() {
+  /// `randomGoal`: a fair coin picks increase or decrease for this session only. Nothing on screen
+  /// shows the result, so participant and researcher both stay blind until the questions are done.
+  start({ randomGoal = false } = {}) {
     const profile = this.profile;
     if (!profile || !this.config.games.length) return;
     this.persist();
-    const s = new LoopSession(structuredClone(this.config), profile);
+    const cfg = structuredClone(this.config);
+    cfg.goalAssignment = randomGoal ? 'random' : 'manual';
+    if (randomGoal) cfg.goal = crypto.getRandomValues(new Uint8Array(1))[0] < 128 ? 'increase' : 'decrease';
+    const s = new LoopSession(cfg, profile);
     s.onBlockFinished = b => {
       this.lastBlock = b;
       Store.save(KEYS.profiles, this.profiles);   // persist learning after every block
@@ -197,14 +203,32 @@ const model = {
     const summary = s.finish();
     const profile = this.profile;
     Store.archive({ id: summary.date, profileID: profile.id, profileName: profile.name, date: summary.date,
-                    source: this.ui.source, demo: this.demo || undefined, config: s.config, blocks: s.blocks, log: s.log });
+                    source: this.ui.source, demo: this.demo || undefined, surveyPending: !this.demo || undefined,
+                    config: s.config, blocks: s.blocks, log: s.log });
     this.justSaved = summary.date;
     this.persist();
     this.session = null;
     unmountGame();
     if (this.demo) this.ui.tab = 'results';
+    else this.survey = { id: summary.date, answers: {} };
     render();
-    if (Upload.settings.auto && !this.demo) Upload.pending();
+  },
+
+  /// End-of-session questions answered (or skipped): store them with the session, then reveal the goal.
+  finishSurvey(answers) {
+    const id = this.survey.id;
+    Store.updateEntry(id, { surveyPending: false, survey: { ...answers, at: new Date().toISOString() } });
+    this.survey = null;
+    this.reveal = { id, answers };
+    render();
+  },
+  /// The participant's choice on the reveal screen; a session left without a choice can still be sent from Researcher.
+  shareSession(send) {
+    Store.updateEntry(this.reveal.id, { share: send });
+    this.reveal = null;
+    this.sentLast = send;
+    render();
+    if (send) Upload.pending();
   },
 
   /// Games call this for every reward opportunity (success / near miss / nothing).
@@ -223,6 +247,8 @@ const app = document.getElementById('app');
 
 function render() {
   if (model.session) { renderSession(); return; }
+  if (model.survey) { renderSurvey(); return; }
+  if (model.reveal) { renderReveal(); return; }
   const tabs = [['play', 'Play'], ['results', 'Results'], ['researcher', 'Researcher']];
   app.innerHTML = `
     <header class="appbar">
@@ -266,9 +292,11 @@ function playView() {
     </section>
     <section class="group">
       <button id="start" class="primary">▶ Start session</button>
+      <button id="startRandom">🎲 Start with a random goal</button>
+      <p class="foot">The random goal ignores the Goal setting above, is drawn by a fair coin per session, and is shown after the end-of-session questions.</p>
       <p class="foot" id="startNote">${len}</p>
       ${model.justSaved ? `<p class="foot">Last session saved in this browser. Download its CSVs from Results ▸ Data.</p>` : ''}
-      ${model.justSaved && Upload.settings.auto ? `<p class="foot upload-status">${esc(Upload.status)}</p>` : ''}
+      ${model.justSaved && model.sentLast ? `<p class="foot upload-status">${esc(Upload.status)}</p>` : ''}
     </section>`;
 }
 
@@ -314,7 +342,72 @@ function bindPlay() {
   };
   $('source').onclick = e => { const v = e.target.dataset.v; if (v) { model.ui.source = v; model.persist(); render(); } };
   $('start').onclick = () => model.start();
+  $('startRandom').onclick = () => model.start({ randomGoal: true });
   renderPolarStatus();
+}
+
+// End-of-session questions
+
+/// Felt state, felt change and a goal guess, to compare with the measured HRV in the analysis.
+/// Wording never names the goal; the guess maps "calm me down" → increase, "wind me up" → decrease.
+const SURVEY = [
+  { key: 'relaxed', text: 'How relaxed did you feel while playing?', lo: 'Very tense', hi: 'Very relaxed' },
+  { key: 'calmer', text: 'How does your body feel now compared with before you started?', lo: 'Much more wound up', mid: 'No different', hi: 'Much calmer' },
+  { key: 'guess', text: 'If the game was nudging you one way, which was it?',
+    options: [['increase', 'Calm me down'], ['decrease', 'Wind me up'], ['unsure', "Couldn't tell"]] },
+];
+
+function renderSurvey() {
+  const a = model.survey.answers, done = SURVEY.every(q => a[q.key] != null);
+  app.innerHTML = `<main class="page survey">
+    <h1>A few quick questions</h1>
+    ${SURVEY.map((q, i) => `<section class="group" data-q="${q.key}"><h2>${i + 1} of ${SURVEY.length}</h2><p class="q">${q.text}</p>
+      ${q.options
+        ? `<div class="seg choice">${q.options.map(([v, l]) => `<button data-v="${v}" class="${a[q.key] === v ? 'on' : ''}">${l}</button>`).join('')}</div>`
+        : `<div class="seg scale">${[1, 2, 3, 4, 5, 6, 7].map(v => `<button data-v="${v}" class="${a[q.key] === v ? 'on' : ''}">${v}</button>`).join('')}</div>
+           <div class="ends"><span>${q.lo}</span>${q.mid ? `<span>${q.mid}</span>` : ''}<span>${q.hi}</span></div>`}
+    </section>`).join('')}
+    <button id="surveyDone" class="primary" ${done ? '' : 'disabled'}>Done</button>
+    <p class="foot center"><button id="surveySkip" class="link">Skip the questions</button></p>
+  </main>`;
+  app.querySelectorAll('[data-q]').forEach(sec => {
+    sec.onclick = e => {
+      const v = e.target.closest('button')?.dataset.v;
+      if (v == null) return;
+      a[sec.dataset.q] = /^\d$/.test(v) ? +v : v;
+      renderSurvey();
+    };
+  });
+  document.getElementById('surveyDone').onclick = () => model.finishSurvey(a);
+  document.getElementById('surveySkip').onclick = () => model.finishSurvey({ ...a, skipped: true });
+}
+
+/// After the questions: which way the session was pushing, then send or keep the data.
+function renderReveal() {
+  const { id, answers } = model.reveal;
+  const e = Store.load(KEYS.archive, []).find(x => x.id === id);
+  const goal = e?.config.goal, up = goal === 'increase';
+  const guess = answers.skipped ? null : answers.guess;
+  const verdict = !guess ? '' : guess === 'unsure' ? "You said you couldn't tell."
+    : guess === goal ? 'You guessed right.' : `You guessed ${guess === 'increase' ? 'calm me down' : 'wind me up'}.`;
+  app.innerHTML = `<main class="page survey reveal">
+    <h1>This session</h1>
+    <section class="group center">
+      <p class="goal-label">The game was trying to</p>
+      <p class="goal ${up ? 'up' : 'down'}">${up ? '▲ Increase HRV' : '▼ Decrease HRV'}</p>
+      <p class="muted">${up ? 'Calm you down' : 'Wind you up'} · ${e?.config.goalAssignment === 'random' ? 'picked by a coin flip' : 'set in the Goal setting'}</p>
+      ${verdict ? `<p class="q">${verdict}</p>` : ''}
+    </section>
+    <section class="group">
+      <h2>Your data</h2>
+      <p class="q">Send this session's data to the study?</p>
+      <p class="foot">Heart rhythm (RR intervals), game events and your answers, under the participant name${Upload.ready ? '' : '. Uploading isn\'t set up in this browser yet, so it will be sent once a researcher sets it up'}.</p>
+      <button id="shareYes" class="primary">Send data</button>
+      <button id="shareNo">Don't send</button>
+    </section>
+  </main>`;
+  document.getElementById('shareYes').onclick = () => model.shareSession(true);
+  document.getElementById('shareNo').onclick = () => model.shareSession(false);
 }
 
 // Session
@@ -471,7 +564,7 @@ function resultsView() {
     ${arch.length ? `<table class="files">${arch.slice().reverse().map(e => `<tr><td>${new Date(e.date).toLocaleString()}</td><td>
       ${e.log ? `<button data-dl="ticks" data-id="${e.id}">ticks.csv</button>` : ''}
       <button data-dl="blocks" data-id="${e.id}">blocks.csv</button>
-      <button data-dl="summary" data-id="${e.id}">summary.json</button>${e.uploaded ? ' <span class="muted" title="Uploaded to GitHub">☁︎</span>' : ''}</td></tr>`).join('')}</table>` : '<p class="muted">Nothing saved yet.</p>'}
+      <button data-dl="summary" data-id="${e.id}">summary.json</button>${e.uploaded ? ' <span class="muted" title="Uploaded to GitHub">☁︎</span>' : e.share === false ? ' <span class="muted" title="Participant chose not to send">not sent</span>' : ''}</td></tr>`).join('')}</table>` : '<p class="muted">Nothing saved yet.</p>'}
     <div class="row"><button id="exportAll">Export everything (JSON)</button></div>
     <p class="foot">Sessions are stored in this browser only. Download them to keep a copy. Clearing site data deletes them.</p>
   </section>`;
@@ -488,7 +581,7 @@ function bindResults() {
     if (b.dataset.dl === 'ticks') download(`${base}_ticks.csv`, CSV.ticks(entry.log));
     if (b.dataset.dl === 'blocks') download(`${base}_blocks.csv`, CSV.blocks(entry.blocks));
     if (b.dataset.dl === 'summary') {
-      download(`${base}_summary.json`, JSONX.stringify({ date: entry.date, goal: entry.config.goal, blocks: entry.blocks,
+      download(`${base}_summary.json`, JSONX.stringify({ date: entry.date, goal: entry.config.goal, survey: entry.survey ?? null, blocks: entry.blocks,
         config: entry.config }, 2), 'application/json');
     }
   });
@@ -534,10 +627,9 @@ function researcherView() {
     <section class="group"><h2>Upload to GitHub</h2>
       <label class="field"><span>Data repo</span><input id="upRepo" placeholder="owner/name" value="${esc(Upload.settings.repo)}" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
       <label class="field"><span>Access token</span><input id="upToken" type="password" placeholder="github_pat_…" value="${esc(Upload.settings.token)}" autocomplete="off"></label>
-      <label class="toggle"><span>Upload after each session</span><input type="checkbox" id="upAuto" ${Upload.settings.auto ? 'checked' : ''}></label>
       <div class="row"><button id="upTest">Test connection</button><button id="upNow" ${Upload.waiting().length ? '' : 'disabled'}>Upload ${Upload.waiting().length} waiting</button></div>
       <p class="foot upload-status">${esc(Upload.status)}</p>
-      <p class="foot">Each finished session goes to <code>sessions/&lt;participant&gt;/</code> in the repo as one JSON file, and the repo's analysis runs on it. The token stays in this browser and is never exported. Use a fine-grained token that can only write this one repo, and coded participant names.</p>
+      <p class="foot">After each session the participant chooses whether to send it. Each sent session goes to <code>sessions/&lt;participant&gt;/</code> in the repo as one JSON file, and the repo's analysis runs on it. The token stays in this browser and is never exported. Use a fine-grained token that can only write this one repo, and coded participant names.</p>
     </section>
     <section class="group">
       <div class="row"><button id="resetTuner" class="danger">Reset tuner for ${esc(model.profile.name)}</button></div>
@@ -574,7 +666,6 @@ function bindResearcher() {
   const up = Upload.settings;
   document.getElementById('upRepo').onchange = e => { up.repo = e.target.value.trim().replace(/^https:\/\/github\.com\//, '').replace(/\/$/, ''); e.target.value = up.repo; Upload.save(); };
   document.getElementById('upToken').onchange = e => { up.token = e.target.value.trim(); Upload.save(); };
-  document.getElementById('upAuto').onchange = e => { up.auto = e.target.checked; Upload.save(); };
   document.getElementById('upTest').onclick = () => Upload.test();
   document.getElementById('upNow').onclick = () => Upload.pending();
   document.getElementById('resetTuner').onclick = () => {
@@ -587,6 +678,10 @@ function bindResearcher() {
 // MARK: launch
 
 model.ui.profileID ??= model.profiles[0].id;
+// A page closed on the question screen: record the questions as missed so the session can still upload.
+for (const e of Store.load(KEYS.archive, []).filter(x => x.surveyPending)) {
+  Store.updateEntry(e.id, { surveyPending: false, survey: { missed: true } });
+}
 if (demoGame) {
   // ?demo=<game>: short simulated session that starts by itself (smoke tests; settings not saved).
   Object.assign(model.config, {
