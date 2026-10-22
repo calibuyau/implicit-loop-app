@@ -127,6 +127,7 @@ details.tuner summary { cursor: pointer; font-family: ui-monospace, Menlo, monos
 .progress { flex: 1; height: 26px; padding: 10px 0; background: linear-gradient(var(--line), var(--line)) content-box; border-radius: 3px; cursor: default; touch-action: none; }
 .progress div { height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.9s linear; }
 .round { font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 60px; text-align: right; }
+.left { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; }
 .stage { position: relative; flex: 1; min-height: 0; }
 .game-host { position: absolute; inset: 0; }
 .overlay {
@@ -206,3 +207,98 @@ table.history th { text-align: left; font-weight: 500; color: var(--muted); font
 table.history td { padding: 8px 6px 8px 0; border-top: 1px solid var(--line); vertical-align: top; }
 table.history .up { color: var(--c1); }
 table.history .down { color: var(--danger); }
+
+/* 80s look for the participant-facing screens (tester home, history, questions, reveal): night sky, striped
+   sunset sun and neon grid, neon-edged panels, chrome title, arcade type. Researcher screens and games keep their own. */
+body.retro {
+  --bg: transparent; --panel: rgba(18, 4, 38, 0.78); --text: #f6e8ff; --muted: #b79ad6; --line: rgba(45, 226, 230, 0.25);
+  --accent: #ff2e88; --accent-text: #fff; --danger: #ff2e88; --c1: #2de2e6; --cyan: #2de2e6; --pink: #ff2e88;
+  --pixel: "Press Start 2P", ui-monospace, monospace;
+  color-scheme: dark; background: #0b0221; color: var(--text);
+  font-family: "VT323", ui-monospace, monospace; font-size: 1.25rem;
+}
+body.retro::before {   /* sky, stars and the striped sun */
+  content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background:
+    radial-gradient(1.5px 1.5px at 12% 8%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 30% 16%, #fff 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 72% 6%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 88% 20%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 52% 12%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 6% 30%, #fff 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 94% 34%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 40% 28%, #fff 50%, transparent 51%),
+    linear-gradient(#0b0221 0%, #1d0640 35%, #4a0c63 52%, #9b1b78 62%, #0b0221 62.2%);
+}
+body.retro::after {   /* the sun, striped in its lower half */
+  content: ''; position: fixed; left: 50%; bottom: 38%; width: 62vmin; height: 31vmin; transform: translateX(-50%); z-index: -1; pointer-events: none;
+  border-radius: 31vmin 31vmin 0 0; opacity: 0.55;
+  background: linear-gradient(#ffe66b, #ff8a3d 45%, #ff2e88);
+  -webkit-mask: linear-gradient(#000 0 45%, transparent 45%), repeating-linear-gradient(#000 0 7%, transparent 7% 11%);
+  mask: linear-gradient(#000 0 45%, transparent 45%), repeating-linear-gradient(#000 0 7%, transparent 7% 11%);
+}
+body.retro #app::before {   /* grid floor */
+  content: ''; position: fixed; left: -50%; right: -50%; bottom: 0; height: 38%; z-index: -1; pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 46, 136, 0.55) 0 2px, transparent 2px 48px),
+    repeating-linear-gradient(0deg, rgba(45, 226, 230, 0.5) 0 2px, transparent 2px 40px),
+    linear-gradient(#2a0845, #0b0221);
+  transform: perspective(220px) rotateX(52deg); transform-origin: top center;
+  -webkit-mask: linear-gradient(transparent, #000 25%); mask: linear-gradient(transparent, #000 25%);
+}
+body.retro .appbar { background: none; }
+body.retro .appbar h1, body.retro .survey h1 {
+  font-family: var(--pixel); font-size: 1.05rem; letter-spacing: 0.04em; line-height: 1.4; margin: 0 0 14px; text-align: center;
+  background: linear-gradient(#ffffff 0%, #bdefff 45%, #3a6fb0 50%, #ffffff 56%, #ffb3e6 100%); -webkit-background-clip: text; background-clip: text;
+  color: transparent; filter: drop-shadow(0 0 6px rgba(45, 226, 230, 0.6));
+}
+body.retro .appbar nav { border: 2px solid var(--cyan); border-radius: 4px; padding: 3px; background: rgba(11, 2, 33, 0.7); box-shadow: 0 0 12px rgba(45, 226, 230, 0.35); }
+body.retro .appbar nav button { border-radius: 2px; padding: 8px 4px; font-family: var(--pixel); font-size: 0.62rem; color: var(--cyan); }
+body.retro .appbar nav button.on { background: var(--cyan); color: #12032a; box-shadow: 0 0 14px rgba(45, 226, 230, 0.7); }
+body.retro .group {
+  border: 2px solid var(--pink); border-radius: 4px; padding: 16px; -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  box-shadow: 0 0 14px rgba(255, 46, 136, 0.45), inset 0 0 18px rgba(255, 46, 136, 0.12);
+}
+body.retro .group h2 { font-family: var(--pixel); font-size: 0.6rem; color: var(--cyan); letter-spacing: 0.06em; text-shadow: 0 0 6px rgba(45, 226, 230, 0.8); }
+body.retro .foot { font-size: 1.05rem; line-height: 1.15; }
+body.retro button {
+  border: 2px solid var(--cyan); border-radius: 3px; padding: 8px 12px; color: var(--cyan); background: rgba(11, 2, 33, 0.6);
+  font-family: var(--pixel); font-size: 0.62rem; line-height: 1.5; box-shadow: 0 0 8px rgba(45, 226, 230, 0.35), 3px 3px 0 #12032a;
+}
+body.retro button:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 0 0 8px rgba(45, 226, 230, 0.35), 1px 1px 0 #12032a; }
+body.retro button.primary {
+  border: 0; padding: 16px 12px; font-size: 0.85rem; color: #fff; text-shadow: 2px 2px 0 #7a0a4a;
+  background: linear-gradient(#ffd23f, #ff8a3d 35%, #ff2e88 75%, #b326d9); box-shadow: 0 0 18px rgba(255, 46, 136, 0.6), 4px 4px 0 #12032a;
+}
+body.retro .seg { border: 0; gap: 6px; overflow: visible; }
+body.retro .seg button { padding: 12px 2px; font-size: 0.8rem; }
+body.retro .seg button + button { border-left: 2px solid var(--cyan); }
+body.retro .seg button.on { background: var(--cyan); color: #12032a; box-shadow: 0 0 16px rgba(45, 226, 230, 0.8), 3px 3px 0 #12032a; }
+body.retro .survey .seg.choice button { padding: 12px 6px; font-size: 0.55rem; line-height: 1.6; }
+body.retro .survey .q { font-size: 1.4rem; line-height: 1.1; }
+body.retro .survey .ends { font-size: 1rem; }
+body.retro button:disabled { opacity: 0.4; filter: grayscale(0.6); }
+body.retro button.link { border: 0; background: none; box-shadow: none; color: var(--muted); font-family: inherit; font-size: 1.1rem; }
+body.retro input:not([type]) { border: 2px solid var(--cyan); border-radius: 3px; background: rgba(11, 2, 33, 0.8); padding: 8px 10px; font-size: 1.3rem; color: var(--text); }
+body.retro input::placeholder { color: var(--muted); }
+body.retro .toggle { font-size: 1.35rem; }
+body.retro .status { font-size: 1.3rem; }
+body.retro::after { opacity: 0.75; }
+body.retro .toggle input { width: 24px; height: 24px; accent-color: var(--pink); }
+body.retro .status .heart { color: var(--pink); text-shadow: 0 0 8px var(--pink); }
+body.retro .reveal .goal { font-family: var(--pixel); font-size: 1.15rem; line-height: 1.5; text-shadow: 0 0 12px currentColor; }
+body.retro .reveal .goal.up { color: var(--cyan); }
+body.retro .reveal .goal.down { color: var(--pink); }
+body.retro table.history { font-size: 1.15rem; }
+body.retro table.history th { font-family: var(--pixel); font-size: 0.5rem; color: var(--cyan); }
+body.retro table.history td { border-top-color: rgba(45, 226, 230, 0.2); }
+body.retro table.history .up { color: var(--cyan); }
+body.retro table.history .down { color: var(--pink); }
+
+/* calibuYau banner: 8-bit type with an OutRun sunset gradient, slanted, with a hard drop shadow */
+.brand { display: flex; justify-content: center; padding: 6px 0 14px; }
+.brand span {
+  display: inline-block; font-family: "Press Start 2P", ui-monospace, monospace; font-size: clamp(1.5rem, 8.4vw, 2.4rem);
+  line-height: 1.25; letter-spacing: 0.02em; transform: skewX(-12deg);
+  background: linear-gradient(#fff6a8 0%, #ffd23f 30%, #ff8a3d 52%, #ff3f8e 74%, #b326d9 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(2px 0 0 #2b0a4d) drop-shadow(-2px 0 0 #2b0a4d) drop-shadow(0 2px 0 #2b0a4d) drop-shadow(0 -2px 0 #2b0a4d)
+          drop-shadow(4px 4px 0 #ff3f8e);
+}
+body.retro .survey .brand { padding-top: 4px; }

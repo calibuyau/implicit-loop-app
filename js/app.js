@@ -269,6 +269,8 @@ model.polar.addEventListener('change', () => { if (!model.session && !model.surv
 const app = document.getElementById('app');
 
 function render() {
+  // Participant-facing screens get the 80s look; researcher screens and games keep their own.
+  document.body.classList.toggle('retro', !model.session && (model.tester || !!model.survey || !!model.reveal));
   if (model.session) { renderSession(); return; }
   if (model.survey) { renderSurvey(); return; }
   if (model.reveal) { renderReveal(); return; }
@@ -383,6 +385,7 @@ const SURVEY = [
 function renderSurvey() {
   const a = model.survey.answers, done = SURVEY.every(q => a[q.key] != null);
   app.innerHTML = `<main class="page survey">
+    ${BRAND}
     <h1>A few quick questions</h1>
     ${SURVEY.map((q, i) => `<section class="group" data-q="${q.key}"><h2>${i + 1} of ${SURVEY.length}</h2><p class="q">${q.text}</p>
       ${q.options
@@ -414,6 +417,7 @@ function renderReveal() {
   const verdict = !guess ? '' : guess === 'unsure' ? "You said you couldn't tell."
     : guess === goal ? 'You guessed right.' : `You guessed ${guess === 'increase' ? 'calm me down' : 'wind me up'}.`;
   app.innerHTML = `<main class="page survey reveal">
+    ${BRAND}
     <h1>This session</h1>
     <section class="group center">
       <p class="goal-label">The game was trying to</p>
@@ -435,11 +439,15 @@ function renderReveal() {
 
 // Tester interface: name once, strap, random-goal start; and the tester's own past sessions.
 
+/// 8-bit, OutRun-style banner at the top of the participant-facing screens.
+const BRAND = '<div class="brand" role="img" aria-label="calibuYau"><span>calibuYau</span></div>';
+
 function renderTester() {
   const tabs = [['play', 'Play'], ['history', 'My sessions']];
   if (!tabs.some(([k]) => k === model.ui.tab)) model.ui.tab = 'play';
   app.innerHTML = `
     <header class="appbar">
+      ${BRAND}
       <h1>Implicit Loop</h1>
       <nav>${tabs.map(([k, l]) => `<button data-tab="${k}" class="${model.ui.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
     </header>
@@ -469,6 +477,10 @@ function testerPlayView() {
       <div id="polar"></div>
       <p class="foot">Put on the Polar H10 (wet the strap's sensors) before connecting.</p>
     </section>
+    <section class="group"><h2>Games</h2>
+      <div id="games">${GAME_KINDS.map(g => `<label class="toggle"><span>${GAMES[g].title}</span><input type="checkbox" value="${g}" ${model.config.games.includes(g) ? 'checked' : ''}></label>`).join('')}</div>
+      <p class="foot">Pick one or more. With more than one, the session switches between them.</p>
+    </section>
     <section class="group">
       <button id="startRandom" class="primary" ${named ? '' : 'disabled'}>▶ Start session</button>
       <p class="foot">About ${Math.round(sessionTotalS({ ...model.config, ...TESTER_SESSION }) / 60)} minutes. Sit comfortably and play as you normally would. At the end there are three quick questions.</p>
@@ -492,6 +504,12 @@ function bindTesterPlay() {
   if (rn) rn.onclick = () => { model.renaming = true; render(); };
   const go = document.getElementById('startRandom');
   go.onclick = () => model.start({ randomGoal: true });
+  document.getElementById('games').onchange = () => {
+    model.config.games = [...document.querySelectorAll('#games input:checked')].map(i => i.value);
+    model.persist();
+    renderPolarStatus();
+    if (!model.ui.testerNamed) go.disabled = true;
+  };
   renderPolarStatus();
   if (!model.ui.testerNamed) go.disabled = true;
 }
@@ -527,6 +545,7 @@ function renderSession() {
         <button id="end" class="icon" aria-label="End session">✕</button>
         <div id="progress" class="progress" title=""><div></div></div>
         <span id="round" class="round"></span>
+        <span id="left" class="left" aria-label="Time left"></span>
       </header>
       <div class="stage"><div id="gameHost" class="game-host"></div><pre id="overlay" class="overlay" hidden></pre></div>
     </div>`;
@@ -564,6 +583,8 @@ function updateSession() {
   }
   document.querySelector('#progress div').style.width = `${Math.min(1, s.elapsed / sessionTotalS(s.config)) * 100}%`;
   document.getElementById('round').textContent = s.phase === 'baseline' ? 'Warm-up' : `Round ${Math.max(1, s.blockNumber)}`;
+  const left = Math.max(0, Math.ceil(sessionTotalS(s.config) - s.elapsed));
+  document.getElementById('left').textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
   const ov = document.getElementById('overlay');
   ov.hidden = !model.overlay;
   if (model.overlay) {
