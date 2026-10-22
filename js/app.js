@@ -129,6 +129,9 @@ const stamp = iso => iso.replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
 // MARK: model
 
 const params = new URLSearchParams(location.search);
+/// Tester sessions are 15 min: 60 s baseline + 4 blocks of 3.5 min (washout + block), block 4 the sham.
+/// Block timing stays as for researchers so block scores are comparable.
+const TESTER_SESSION = { baselineS: 60, maxBlocks: 4 };
 const demoGame = params.get('demo');
 
 const model = {
@@ -172,6 +175,7 @@ const model = {
     if (!profile || !this.config.games.length) return;
     this.persist();
     const cfg = structuredClone(this.config);
+    if (this.tester) Object.assign(cfg, TESTER_SESSION);
     cfg.goalAssignment = randomGoal ? 'random' : 'manual';
     if (randomGoal) cfg.goal = crypto.getRandomValues(new Uint8Array(1))[0] < 128 ? 'increase' : 'decrease';
     const s = new LoopSession(cfg, profile);
@@ -467,7 +471,7 @@ function testerPlayView() {
     </section>
     <section class="group">
       <button id="startRandom" class="primary" ${named ? '' : 'disabled'}>▶ Start session</button>
-      <p class="foot">About ${Math.round(sessionTotalS(model.config) / 60)} minutes. Sit comfortably and play as you normally would. At the end there are three quick questions.</p>
+      <p class="foot">About ${Math.round(sessionTotalS({ ...model.config, ...TESTER_SESSION }) / 60)} minutes. Sit comfortably and play as you normally would. At the end there are three quick questions.</p>
       ${model.justSaved && model.sentLast ? `<p class="foot upload-status">${esc(Upload.status)}</p>` : ''}
     </section>`;
 }
